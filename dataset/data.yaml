@@ -1,0 +1,13 @@
+train: D:/PoliNAV_2.0/dataset/train/images
+val: D:/PoliNAV_2.0/dataset/valid/images
+test: D:/PoliNAV_2.0/dataset/test/images
+
+nc: 13
+names: ['albastru', 'fotoliu', 'galben', 'masa', 'mov', 'persoana', 'planta', 'rosu', 'scaun', 'tonomat', 'turcoaz', 'verde', 'videoproiector']
+
+roboflow:
+  workspace: gabriel-svzfl
+  project: polinav2-0
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/gabriel-svzfl/polinav2-0/dataset/1
