@@ -1,94 +1,80 @@
 import json
-import os
 import math
+import os
 import src.config as config
 
-# Calea catre fisierul json
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FISIER_MEMORIE = os.path.join(BASE_DIR, 'data', 'harta_robot.json')
+
+MEMORY_FILE = os.path.join("data", "harta_robot.json")
 
 
 def incarca_harta():
-    """
-    Incarca lista de obiecte. Daca fisierul e vechi (dictionar) sau gol, returneaza lista goala.
-    """
-    if os.path.exists(FISIER_MEMORIE):
-        try:
-            with open(FISIER_MEMORIE, 'r') as f:
-                data = json.load(f)
-                # Verificam daca e formatul nou (Lista) sau cel vechi (Dictionar)
-                if isinstance(data, list):
-                    print(f"[MEMORIE] Am incarcat {len(data)} obiecte.")
-                    return data
-                else:
-                    print("[MEMORIE] Format vechi detectat. Resetez memoria.")
-                    return []
-        except Exception as e:
-            print(f"[MEMORIE] Fisier corupt sau gol: {e}")
+    if not os.path.exists(MEMORY_FILE):
+        return []
+    try:
+        with open(MEMORY_FILE, "r") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
             return []
-    return []
+    except:
+        return []
 
 
 def salveaza_harta(lista_obiecte):
     try:
-        # Ne asiguram ca folderul 'data' exista
-        os.makedirs(os.path.dirname(FISIER_MEMORIE), exist_ok=True)
-        with open(FISIER_MEMORIE, 'w') as f:
+        with open(MEMORY_FILE, "w") as f:
             json.dump(lista_obiecte, f, indent=4)
     except Exception as e:
-        print(f"[MEMORIE EROARE] Nu pot salva harta: {e}")
+        print(f"[MEMORIE EROARE] Nu pot salva: {e}")
 
 
-def proceseaza_obiect(lista_obiecte, clasa, x_nou, y_nou):
+def get_next_id(lista_obiecte):
+    if not lista_obiecte:
+        return 1
+    max_id = max([o['id'] for o in lista_obiecte])
+    return max_id + 1
+
+
+def proceseaza_obiect(lista_obiecte, tip, x, y):
     """
-    Aceasta functie contine toata matematica de decizie.
-    Primeste: Lista curenta, Tipul obiectului vazut, Coordonatele lui calculate.
-    Returneaza: (Lista actualizata, Mesaj pentru consola)
+    Logica inteligenta de evitare a dublurilor.
     """
-    # 1. Aflam raza de identitate din config (0.3m pt scaun, 2.0m default)
-    # Folosim .get() ca sa nu crape daca clasa nu e in lista
-    prag_distanta = config.MEMORY_THRESHOLDS.get(clasa, config.MEMORY_THRESHOLDS['default'])
 
-    index_gasit = -1
-    dist_minima = 9999.0
+    # 1. Luam raza specifica din config (ex: Tonomat = 2.0m)
+    raza_identitate = config.MEMORY_THRESHOLDS.get(tip, config.MEMORY_THRESHOLDS['default'])
 
-    # 2. Cautam in memorie daca avem deja un obiect de ACELASI TIP in apropiere
-    for i, obj in enumerate(lista_obiecte):
-        if obj['tip'] == clasa:
-            # Distanta Euclidiana
-            dist = math.sqrt((obj['x'] - x_nou) ** 2 + (obj['y'] - y_nou) ** 2)
+    cel_mai_apropiat = None
+    dist_minima = 999.0
 
-            # Daca e in raza de actiune (ex: < 30cm)
-            if dist < prag_distanta:
-                # Retinem cel mai apropiat (in caz ca sunt mai multe suprapuse)
-                if dist < dist_minima:
-                    dist_minima = dist
-                    index_gasit = i
+    # 2. Cautam daca avem DEJA acest obiect in harta_robot.json
+    for obj in lista_obiecte:
+        if obj['tip'] == tip:
+            d = math.sqrt((obj['x'] - x) ** 2 + (obj['y'] - y) ** 2)
+            if d < dist_minima:
+                dist_minima = d
+                cel_mai_apropiat = obj
 
-    # 3. Luam Decizia
-    if index_gasit != -1:
-        # CAZ A: OBIECT DEJA CUNOSCUT (Actualizare)
-        # Facem media pozitiilor pentru a rafina precizia (reduce tremuratul)
-        vechi_x = lista_obiecte[index_gasit]['x']
-        vechi_y = lista_obiecte[index_gasit]['y']
+    # 3. VERIFICARE DUBLURI
+    if cel_mai_apropiat is not None and dist_minima < raza_identitate:
+        # --- CAZUL: E ACELASI OBIECT! ---
+        # Nu cream unul nou. Doar ii actualizam pozitia (facem media).
+        # Asta ajuta daca prima data l-a vazut putin gresit.
 
-        lista_obiecte[index_gasit]['x'] = (vechi_x + x_nou) / 2.0
-        lista_obiecte[index_gasit]['y'] = (vechi_y + y_nou) / 2.0
+        cel_mai_apropiat['x'] = (cel_mai_apropiat['x'] + x) / 2.0
+        cel_mai_apropiat['y'] = (cel_mai_apropiat['y'] + y) / 2.0
 
-        # Returnam lista neschimbata ca lungime, doar coordonate updatate
-        return lista_obiecte, f"Actualizat {clasa} #{lista_obiecte[index_gasit]['id']}"
-
+        msg = f"Actualizat {tip} #{cel_mai_apropiat['id']} (Dist: {dist_minima:.2f}m)"
+        return lista_obiecte, msg
     else:
-        # CAZ B: OBIECT NOU
-        # Ii dam un ID unic
-        nou_id = len(lista_obiecte) + 1
-
-        obiect_nou = {
-            "id": nou_id,
-            "tip": clasa,
-            "x": round(x_nou, 3),  # Rotunjim la 3 zecimale
-            "y": round(y_nou, 3)
+        # --- CAZUL: OBIECT NOU-NOUT ---
+        new_id = get_next_id(lista_obiecte)
+        nou = {
+            "id": new_id,
+            "tip": tip,
+            "x": round(x, 2),
+            "y": round(y, 2),
+            # Poti adauga si alte date daca vrei
         }
-
-        lista_obiecte.append(obiect_nou)
-        return lista_obiecte, f"NOU! {clasa} detectat -> ID:{nou_id} la ({x_nou:.1f}, {y_nou:.1f})"
+        lista_obiecte.append(nou)
+        msg = f"NOU! {tip} detectat -> ID:{new_id} la ({x:.1f}, {y:.1f})"
+        return lista_obiecte, msg

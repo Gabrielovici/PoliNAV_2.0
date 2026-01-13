@@ -12,7 +12,7 @@ import src.planner as planner
 
 
 def main():
-    print("=== START PROIECT POLINAV (FINAL: FIX NAVIGARE + FILTRU) ===")
+    print("=== START PROIECT POLINAV (CURAT - FARA TEXT UI) ===")
 
     client = RemoteAPIClient()
     sim = client.require('sim')
@@ -38,6 +38,7 @@ def main():
     memorie_lista = memory.incarca_harta()
     grid_map = config.genereaza_harta_L()
 
+    # Initializam planner-ul
     my_planner = planner.AStarPlanner(grid_map, config.MAP_RESOLUTION, config.MAP_ORIGIN_X, config.MAP_ORIGIN_Y)
 
     stare = "EXPLORE"
@@ -60,16 +61,16 @@ def main():
 
         rx, ry, r_theta = control.get_robot_pose(sim, robot)
 
-        # --- B. PROCESARE VIZUALA (DOAR AFISARE, FARA MEMORARE INCA) ---
+        # --- B. PROCESARE VIZUALA ---
         img_raw, res = sim.getVisionSensorImg(camera)
+        img_display = None
+
         if len(img_raw) > 0:
             img_display = vision.process_camera(img_raw, res)
 
-            # Desenam doar info general
-            txt_info = f"Mod: {stare} | Obiecte: {len(memorie_lista)}"
-            cv2.putText(img_display, txt_info, (10, res[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-        else:
-            img_display = None
+            # --- MODIFICARE: AM SCOS TEXTUL DE JOS ---
+            # txt_info = f"Mod: {stare} | Obiecte: {len(memorie_lista)}"
+            # cv2.putText(img_display, txt_info, (10, res[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
 
         # --- C. CONTROL & LOGICA PRINCIPALA ---
         key = cv2.waitKey(1) & 0xFF
@@ -80,7 +81,6 @@ def main():
         if stare == "EXPLORE":
             control.avoid_obstacles(sim, motor_l, motor_r, sensors)
 
-            # --- LOGICA DE MEMORARE ESTE ACUM AICI ---
             if img_display is not None:
                 obiecte_detectate = vision.detect_objects(img_display)
 
@@ -95,11 +95,9 @@ def main():
                     # 2. Senzori (Cine vede?)
                     dist_grup_fata = min(d_front, d_dl, d_dr)
 
-                    # Decidem directia
                     dist_finala = dist_grup_fata
                     unghi_offset = 0.0
 
-                    # Verificam lateralele
                     if d_l < dist_grup_fata and d_l < 1.0:
                         dist_finala = d_l
                         unghi_offset = 1.57  # +90 grade
@@ -107,27 +105,20 @@ def main():
                         dist_finala = d_r
                         unghi_offset = -1.57  # -90 grade
 
-                    # 3. FILTRU DE CONSISTENTA (CRITIC!)
-                    # Luam pragul din CONFIG (ex: fotoliu=0.35, cutie=0.10)
+                    # 3. FILTRU DE CONSISTENTA
                     prag_vizual = config.VISUAL_MIN_HEIGHT.get(nume_clasa, config.VISUAL_MIN_HEIGHT['default'])
 
-                    # ESTE VALID DACA:
-                    # A. Senzorii il vad aproape (< 2m) SI obiectul e destul de mare pt clasa lui
                     valid_senzorial = (dist_finala < config.DIST_MEMORARE) and (raport_vizual > prag_vizual * 0.5)
-
-                    # B. Visual Override: Senzorii sunt orbi, dar obiectul e URIAS (mai mare decat pragul definit)
                     valid_vizual = (raport_vizual > prag_vizual)
 
                     if conf > 0.60 and (valid_senzorial or valid_vizual):
 
-                        # Estimare distanta daca senzorul e orb
                         if valid_vizual and not valid_senzorial:
                             dist_reala = 0.8 + 0.2
-                            unghi_offset = 0.0  # Presupunem fata
+                            unghi_offset = 0.0
                         else:
                             dist_reala = dist_finala + 0.2
 
-                        # Calcul final
                         unghi_total = r_theta + unghi_offset
                         ox = rx + dist_reala * math.cos(unghi_total)
                         oy = ry + dist_reala * math.sin(unghi_total)
@@ -139,7 +130,7 @@ def main():
                                 print(f"--> {msg} (H={raport_vizual:.2f})")
                                 cv2.circle(img_display, (30, 30), 20, (0, 0, 255), -1)
 
-            # Comanda Navigare
+            # COMANDA NAVIGARE
             if key == ord('n'):
                 control.stop_robot(sim, motor_l, motor_r)
                 tipuri = sorted(list(set([o['tip'] for o in memorie_lista])))
@@ -151,7 +142,6 @@ def main():
                     cmd = input("Mergi la: ").strip().lower()
                     tinte = [o for o in memorie_lista if o['tip'] == cmd]
                     if tinte:
-                        # Mergem la cel mai apropiat
                         tinta = min(tinte, key=lambda o: math.sqrt((o['x'] - rx) ** 2 + (o['y'] - ry) ** 2))
                         path = my_planner.plan(rx, ry, tinta['x'], tinta['y'])
                         if path:
@@ -170,9 +160,8 @@ def main():
             if len(current_path) > 0:
                 nx, ny = current_path[0]
 
-                # Logica Wall Follow temporar
                 if not is_wall_following:
-                    # Daca e obstacol, trecem pe ocolire
+                    # Obstacol aproape?
                     if d_front < 0.6 or sensors[3] < 0.5 or sensors[4] < 0.5:
                         print("[NAV] Obstacol! Ocolesc...")
                         is_wall_following = True
@@ -180,16 +169,12 @@ def main():
                         sim.setJointTargetVelocity(motor_r, 1.0)
                         time.sleep(0.4)
                     else:
-                        # Mergem pe puncte
                         ajuns = control.navigate_to_point(sim, motor_l, motor_r, robot, nx, ny)
                         if ajuns:
                             current_path.pop(0)
                 else:
-                    # Suntem in ocolire
                     control.follow_wall(sim, motor_l, motor_r, sensors)
 
-                    # Verificam daca am revenit la traseu
-                    # ... logica unghiulara ...
                     angle_target = math.atan2(ny - ry, nx - rx)
                     angle_rob = r_theta
                     diff = angle_target - angle_rob
@@ -204,7 +189,6 @@ def main():
                 control.stop_robot(sim, motor_l, motor_r)
                 stare = "EXPLORE"
 
-        # Afisare imagine (comuna)
         if img_display is not None:
             cv2.imshow("Robot Vision", img_display)
 
